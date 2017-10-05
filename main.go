@@ -30,8 +30,14 @@ const versionString = "0.0.2"
 
 var (
 	driver        = agouti.ChromeDriver()
-	listenAddress = flag.String("web.listen-address", "localhost:9156", "The address to listen on for HTTP requests.")
+	listenIP      = flag.String("listenIP", "127.0.0.1", "the ip address to listen on for HTTP requests.")
+	listenPort    = flag.Int("port", 9156, "the port to listen on for HTTP requests.")
 	showVersion   = flag.Bool("version", false, "Print version information.")
+)
+
+var (
+	counter = 0
+	logFlag = false
 )
 
 func init() {
@@ -73,9 +79,36 @@ func main() {
 	}
 	defer driver.Stop()
 
-	log.Infoln("Listening on", *listenAddress)
-	if err := http.ListenAndServe(*listenAddress, nil); err != nil {
+	stop := make(chan struct{})
+	defer close(stop)
+	go guardLog(stop)
+
+	address := fmt.Sprintf("%v:%d", *listenIP, *listenPort)
+	log.Infoln("Listening on", address)
+	if err := http.ListenAndServe(address, nil); err != nil {
 		log.Fatalf("Error starting HTTP server: %s", err)
+	}
+}
+
+func guardLog(stop <- chan struct{}) {
+	for {
+
+		timer := time.NewTimer(time.Second * 10)
+		select {
+		case <- stop:
+			return
+		case <-timer.C:
+		}
+
+		counter ++
+		logFlag = false
+		if counter % 3 == 0 {
+			logFlag = true
+		}
+
+		if counter > 1e10 {
+			counter = 0
+		}
 	}
 }
 
@@ -87,9 +120,17 @@ func probeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if logFlag {
+		log.Infof("begin to probe target: %v", target)
+	}
+
 	start := time.Now()
 	success := probe(target, w)
 	fmt.Fprintf(w, "probe_duration_seconds %f\n", float64(time.Since(start))/1e9)
+
+	if logFlag {
+		log.Infof("end of probing target: %v", target)
+	}
 
 	if success {
 		fmt.Fprintf(w, "probe_success %d\n", 1)
